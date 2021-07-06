@@ -29,6 +29,9 @@ class DeFiSDK:
 	def setRPC(self,rpc_url):
 		self.web3 = Web3(Web3.HTTPProvider(rpc_url))
 
+	def setTransaction(self,gas,gas_limit):
+		self.gas = str(gas)
+		self.gas_limit = gas_limit
 
 	def setWallet(self,wallet_addr,wallet_key):
 		self.senderAddress = wallet_addr
@@ -42,24 +45,18 @@ class DeFiSDK:
 		contract = self.web3.eth.contract(address=factoryAddress, abi=ABI['FACTORY'])
 		pair_address = contract.functions.getPair(tokenA, tokenB).call()
 		tokensPair = self.web3.eth.contract(abi=ABI['PAIR'], address=pair_address)
-		print(pair_address)
+
 		reserves = tokensPair.functions.getReserves().call()
 		price = reserves[1] / reserves[0]
-		return price
+		return float(price)
 
-
-	def swap(self,factory,tokenA,tokenB,value):
-		factoryAddress = self.web3.toChecksumAddress(Contracts['AMM'][factory]['Router'])
+	def swap(self, factory, tokenA, tokenB, amountIn, amountOutMin):
+		factoryAddress = self.web3.toChecksumAddress(
+		    Contracts['AMM'][factory]['Router'])
 
 		contract = self.web3.eth.contract(address=factoryAddress, abi=ABI['ROUTER'])
 		nonce = self.web3.eth.get_transaction_count(self.senderAddress)
 		
-		amountIn = self.web3.toWei(value, 'ether')
-		amount1 = contract.functions.getAmountsOut(
-		    amountIn, [tokenB, tokenA]).call()
-		amountOutMin = int(amount1[1] * 0.99) #slippage 1%
-		# minAmountPrint = self.web3.fromWei(amountOutMin, 'ether')
-		# print('Minimum recieved:', minAmountPrint)
 		txn = contract.functions.swapExactTokensForTokens(
                     amountIn,
 					amountOutMin,
@@ -68,8 +65,8 @@ class DeFiSDK:
                     (int(time.time()) + 10000)
                 ).buildTransaction({
                     "from": self.senderAddress,
-                    "gas": 250000,
-                    "gasPrice": self.web3.toWei("6", "gwei"),
+                    "gas": self.gas_limit,
+                    "gasPrice": self.web3.toWei(self.gas, "gwei"),
                   	"value": 0,
                     "nonce": nonce,
                 })
@@ -80,12 +77,31 @@ class DeFiSDK:
 
 	def buy(self,factory,pair,value):
 		tokenA, tokenB = [self.web3.toChecksumAddress(Contracts['Tokens'][i]) for i in pair.split('/')]
-		return self.swap(factory,tokenA,tokenB,value)
+		factoryAddress = self.web3.toChecksumAddress(
+		    Contracts['AMM'][factory]['Router'])
+		contract = self.web3.eth.contract(address=factoryAddress, abi=ABI['ROUTER'])
+		amountOut = self.web3.toWei(value, 'ether')
+		amountOutMin = int(amountOut * 0.99)
+		amountIn = contract.functions.getAmountsIn(amountOut, [tokenB, tokenA]).call()
+		amountIn = int(amountIn[0])
+
+		return self.swap(factory,tokenA,tokenB,amountIn,amountOutMin)
 
 
 	def sell(self, factory, pair, value):
-		tokenB, tokenA = [self.web3.toChecksumAddress(Contracts['Tokens'][i]) for i in pair.split('/')]
-		return self.swap(factory, tokenA, tokenB, value)
+		tokenB, tokenA = [self.web3.toChecksumAddress(
+		    Contracts['Tokens'][i]) for i in pair.split('/')]
+		factoryAddress = self.web3.toChecksumAddress(
+		    Contracts['AMM'][factory]['Router'])
+
+		contract = self.web3.eth.contract(address=factoryAddress, abi=ABI['ROUTER'])
+
+		amountIn = self.web3.toWei(value, 'ether')
+		amountOut = contract.functions.getAmountsOut(
+		    amountIn, [tokenB, tokenA]).call()
+		amountOutMin = int(amountOut[1] * 0.99)
+
+		return self.swap(factory, tokenA, tokenB, amountIn, amountOutMin)
 
 
 	def getBalance(self,token):
@@ -95,5 +111,11 @@ class DeFiSDK:
 		address = self.web3.toChecksumAddress(self.senderAddress)
 		balance = contract.functions.balanceOf(address).call()
 		data = self.web3.fromWei(balance,"ether")
-		return data
+		return float(data)
+
+	
+	def getWalletBalance(self):
+		balance = self.web3.eth.get_balance(self.senderAddress)
+		result = self.web3.fromWei(balance, 'ether')
+		return float(result)
 
